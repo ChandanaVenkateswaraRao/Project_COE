@@ -257,8 +257,8 @@ export default function CreatePatternPage() {
     setDegreeYearSem(decoded.degreeYearSem || "B.Tech. / I / ODD");
     setDateSession(decoded.dateSession || "To be set during paper generation");
     setInstructions(decoded.instructions);
-    setPartA((editingPattern.partAStructure as PartAQuestionSlot[]) || []);
-    setPartB((editingPattern.partBStructure as PartBQuestionGroup[]) || []);
+    setPartA((editingPattern.partAStructure as unknown as PartAQuestionSlot[]) || []);
+    setPartB((editingPattern.partBStructure as unknown as PartBQuestionGroup[]) || []);
 
     setTimeout(() => {
       isHydratingPatternRef.current = false;

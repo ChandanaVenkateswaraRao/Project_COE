@@ -78,8 +78,8 @@ const userFormSchema = z.object({
 
 const editUserFormSchema = userFormSchema.omit({ password: true })
 
-type UserFormValues = z.infer<typeof userFormSchema>
-type EditUserFormValues = z.infer<typeof editUserFormSchema>
+export type UserFormValues = z.infer<typeof userFormSchema>
+export type EditUserFormValues = z.infer<typeof editUserFormSchema>
 
 interface AddUserSheetProps {
     children: React.ReactNode

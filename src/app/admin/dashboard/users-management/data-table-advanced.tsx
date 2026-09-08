@@ -37,7 +37,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select"
-import { AddUserSheet, EditUserDialog, DeleteUserDialog } from "./user-management-components"
+import { AddUserSheet, EditUserDialog, DeleteUserDialog, type UserFormValues, type EditUserFormValues } from "./user-management-components"
 import { createColumns, UserTableData } from "./columns"
 import { trpc } from "@/trpc/client"
 import { toast } from "sonner"
@@ -72,15 +72,7 @@ export function DataTableAdvanced({ initialData }: DataTableAdvancedProps) {
         setIsDeleteDialogOpen(true)
     }
 
-    const handleAddUser = async (formData: {
-        firstName: string;
-        lastName: string;
-        email: string;
-        facultyId: string;
-        role: "ADMIN" | "COURSE_COORDINATOR" | "MODULE_COORDINATOR" | "PROGRAM_COORDINATOR" | "HOD" | "DEAN";
-        designation: "ASSISTANT_PROFESSOR" | "ASSOCIATE_PROFESSOR" | "PROFESSOR";
-        password?: string;
-    }) => {
+    const handleAddUser = async (formData: UserFormValues & { password: string }) => {
         try {
             // Ensure password is provided for new users
             if (!formData.password) {
@@ -103,14 +95,7 @@ export function DataTableAdvanced({ initialData }: DataTableAdvancedProps) {
         }
     }
 
-    const handleUpdateUser = async (formData: Partial<{
-        firstName: string;
-        lastName: string;
-        email: string;
-        facultyId: string;
-        role: "ADMIN" | "COURSE_COORDINATOR" | "MODULE_COORDINATOR" | "PROGRAM_COORDINATOR" | "HOD" | "DEAN";
-        designation: "ASSISTANT_PROFESSOR" | "ASSOCIATE_PROFESSOR" | "PROFESSOR";
-    }>) => {
+    const handleUpdateUser = async (formData: Partial<EditUserFormValues>) => {
         if (!selectedUser) return
 
         try {

@@ -91,7 +91,7 @@ function ok<T>(payload: {
   return res;
 }
 
-function fail(code: TRPCError["code"], message: string) {
+function fail(code: TRPCError["code"], message: string): never {
   throw new TRPCError({ code, message });
 }
 
@@ -256,7 +256,7 @@ async function validateCoordinatorRoles(input: {
 }
 
 async function validateDepartmentCoordinatorAssignments(input: {
-  departmentId?: string;
+  departmentId?: string | null;
   courseCoordinatorId?: string;
   moduleCoordinatorId?: string;
   programCoordinatorId?: string;

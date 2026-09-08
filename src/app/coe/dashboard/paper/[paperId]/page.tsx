@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, use, useEffect, useRef, useState } from "react";
+import { Fragment, use, useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -79,6 +79,24 @@ export default function PaperViewPage({ params }: PaperViewProps) {
     const { data: paper, isLoading } = trpc.paper.getPaperById.useQuery({
         paperId,
     });
+    const { paperContent, answerKeyContent } = useMemo<{
+        paperContent: any;
+        answerKeyContent: any;
+    }>(() => {
+        let pc: any = null;
+        let ak: any = null;
+        try {
+            if (paper?.paperContent) {
+                pc = JSON.parse(paper.paperContent);
+            }
+            if (paper?.answerKeyContent) {
+                ak = JSON.parse(paper.answerKeyContent);
+            }
+        } catch (e) {
+            console.error("Failed to parse paper content", e);
+        }
+        return { paperContent: pc, answerKeyContent: ak };
+    }, [paper?.paperContent, paper?.answerKeyContent]);
     const { data: committeeContext } = trpc.paper.getCommitteeContext.useQuery();
     const currentRole = committeeContext?.role;
 
@@ -132,7 +150,7 @@ export default function PaperViewPage({ params }: PaperViewProps) {
         const printableHtml = buildQuestionsOnlyHtml();
 
         const result = openProfessionalPrintWindow({
-            title: `${paper.paperCode} - Question Paper`,
+            title: `${paper?.paperCode || "Paper"} - Question Paper`,
             html: printableHtml,
             renderRichContent: true,
         });
@@ -241,8 +259,8 @@ export default function PaperViewPage({ params }: PaperViewProps) {
             <div class="space-y-6 max-w-5xl mx-auto text-sm">
                 <div class="text-center space-y-1">
                     <h2 class="text-xl font-bold uppercase tracking-wide">${escapeHtml(String(paperContent?.header?.institution || "Question Paper"))}</h2>
-                    <p class="font-semibold">${escapeHtml(paper.paperCode)} - Questions Only</p>
-                    <p class="font-medium">${escapeHtml(`${paper.pattern.course.course_code} - ${paper.pattern.course.name}`)}</p>
+                    <p class="font-semibold">${escapeHtml(paper?.paperCode || "")} - Questions Only</p>
+                    <p class="font-medium">${escapeHtml(`${paper?.pattern?.course?.course_code || ""} - ${paper?.pattern?.course?.name || ""}`)}</p>
                 </div>
 
                 <div class="space-y-2">
@@ -325,8 +343,8 @@ export default function PaperViewPage({ params }: PaperViewProps) {
             <div class="space-y-6 max-w-5xl mx-auto text-sm">
                 <div class="text-center space-y-1">
                     <h2 class="text-xl font-bold uppercase tracking-wide">ANSWER KEY</h2>
-                    <p class="font-semibold">${escapeHtml(paper.paperCode)}</p>
-                    <p class="font-medium">${escapeHtml(`${paper.pattern.course.course_code} - ${paper.pattern.course.name}`)}</p>
+                    <p class="font-semibold">${escapeHtml(paper?.paperCode || "")}</p>
+                    <p class="font-medium">${escapeHtml(`${paper?.pattern?.course?.course_code || ""} - ${paper?.pattern?.course?.name || ""}`)}</p>
                 </div>
 
                 <div class="space-y-2">
@@ -426,8 +444,8 @@ export default function PaperViewPage({ params }: PaperViewProps) {
             <div class="space-y-6 max-w-5xl mx-auto text-sm">
                 <div class="text-center space-y-1">
                     <h2 class="text-xl font-bold uppercase tracking-wide">${escapeHtml(String(paperContent?.header?.institution || "Question Paper"))}</h2>
-                    <p class="font-semibold">${escapeHtml(paper.paperCode)} - Questions with Answers</p>
-                    <p class="font-medium">${escapeHtml(`${paper.pattern.course.course_code} - ${paper.pattern.course.name}`)}</p>
+                    <p class="font-semibold">${escapeHtml(paper?.paperCode || "")} - Questions with Answers</p>
+                    <p class="font-medium">${escapeHtml(`${paper?.pattern?.course?.course_code || ""} - ${paper?.pattern?.course?.name || ""}`)}</p>
                 </div>
 
                 <div class="space-y-2">
@@ -491,7 +509,7 @@ export default function PaperViewPage({ params }: PaperViewProps) {
 
         const html = buildAnswersOnlyHtml();
         const result = openProfessionalPrintWindow({
-            title: `${paper.paperCode} - Answer Key`,
+            title: `${paper?.paperCode || "Paper"} - Answer Key`,
             html,
             renderRichContent: true,
         });
@@ -509,7 +527,7 @@ export default function PaperViewPage({ params }: PaperViewProps) {
 
         const html = buildQuestionsWithAnswersHtml();
         const result = openProfessionalPrintWindow({
-            title: `${paper.paperCode} - Questions and Answers`,
+            title: `${paper?.paperCode || "Paper"} - Questions and Answers`,
             html,
             renderRichContent: true,
         });
@@ -703,20 +721,6 @@ export default function PaperViewPage({ params }: PaperViewProps) {
                 </Card>
             </div>
         );
-    }
-
-    // Parse paper content and answer key
-    let paperContent;
-    let answerKeyContent;
-    try {
-        if (paper.paperContent) {
-            paperContent = JSON.parse(paper.paperContent);
-        }
-        if (paper.answerKeyContent) {
-            answerKeyContent = JSON.parse(paper.answerKeyContent);
-        }
-    } catch (e) {
-        console.error("Failed to parse paper content", e);
     }
 
     const renderBloomLabel = (value?: string) => {

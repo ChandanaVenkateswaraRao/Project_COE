@@ -1026,11 +1026,15 @@ export const paperRouter = createTRPCRouter({
           id: true,
           isFinalized: true,
           paperContent: true,
-          course: {
+          pattern: {
             select: {
-              department: {
+              course: {
                 select: {
-                  deanId: true,
+                  department: {
+                    select: {
+                      deanId: true,
+                    },
+                  },
                 },
               },
             },
@@ -1049,7 +1053,7 @@ export const paperRouter = createTRPCRouter({
         });
       }
 
-      if (paper.course.department?.deanId !== ctx.session.user.id) {
+      if (paper.pattern.course.department?.deanId !== ctx.session.user.id) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You can only approve papers for your department",
@@ -1492,9 +1496,13 @@ export const paperRouter = createTRPCRouter({
           id: true,
           paperContent: true,
           answerKeyContent: true,
-          course: {
+          pattern: {
             select: {
-              name: true,
+              course: {
+                select: {
+                  name: true,
+                },
+              },
             },
           },
         },
@@ -1555,7 +1563,7 @@ export const paperRouter = createTRPCRouter({
       ).trim();
 
       const regeneratedQuestion = await regenerateQuestionForPaperSlot({
-        courseName: paper.course.name,
+        courseName: paper.pattern.course.name,
         section: input.section,
         questionNumber: input.questionNumber,
         marks: effectiveMarks,

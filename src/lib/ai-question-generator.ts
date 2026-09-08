@@ -52,9 +52,9 @@ export async function generateQuestionsWithAI(
       return questions;
     }
 
-    // Only fallback to mocks if we got zero questions
-    console.warn("No questions generated, falling back to mock questions");
-    if (process.env.NODE_ENV === "development") {
+    // Only fallback to mocks if we got zero questions and no explicit provider was targeted
+    console.warn("No questions generated");
+    if (process.env.NODE_ENV === "development" && !provider) {
       return generateMockQuestions(params);
     }
 
@@ -62,7 +62,12 @@ export async function generateQuestionsWithAI(
   } catch (error) {
     console.error("AI question generation error:", error);
 
-    // Fallback to mock questions in development only if we got zero questions
+    // If a provider was specifically requested, rethrow so caller can handle fallback
+    if (provider) {
+      throw error;
+    }
+
+    // Fallback to mock questions in development only if provider was not explicitly specified
     if (process.env.NODE_ENV === "development") {
       console.warn("Falling back to mock questions due to error");
       return generateMockQuestions(params);

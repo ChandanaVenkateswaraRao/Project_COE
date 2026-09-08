@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ import {
     AlertDialogFooter,
     AlertDialogHeader,
     AlertDialogTitle,
+    AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
     Tooltip,
@@ -37,7 +38,7 @@ export default function GenerateQuestionsPage() {
     const [selectedCourse, setSelectedCourse] = useState<string>('');
     const [selectedMaterial, setSelectedMaterial] = useState<string>('');
     const [selectedProvider, setSelectedProvider] = useState<"GEMINI" | "OLLAMA">("OLLAMA");
-    const [selectedModel, setSelectedModel] = useState<string>('mistral:7b');
+    const [selectedModel, setSelectedModel] = useState<string>('gpt-oss:20b');
     const [showAdvanced, setShowAdvanced] = useState(false);
 
     // Academic level and enhancement options
@@ -48,13 +49,33 @@ export default function GenerateQuestionsPage() {
     // tRPC queries
     const { data: courses = [], isLoading: coursesLoading } = trpc.coordinator.getCoursesForMaterialUpload.useQuery();
     const { data: materials = [], isLoading: materialsLoading } = trpc.coordinator.getUploadedMaterials.useQuery();
+    const { data: aiHealth } = trpc.coordinator.checkAIHealth.useQuery(undefined, {
+        refetchInterval: 30000,
+        refetchOnWindowFocus: false,
+    });
     const { data: ollamaModels = [], isLoading: modelsLoading } = trpc.coordinator.getOllamaModels.useQuery({
         provider: selectedProvider,
     });
 
+    // Keep selectedModel synchronized with available models
+    useEffect(() => {
+        if (ollamaModels && ollamaModels.length > 0) {
+            const modelExists = ollamaModels.some((m) => m.model === selectedModel);
+            if (!modelExists) {
+                const defaultM = selectedProvider === "GEMINI"
+                    ? (aiHealth?.gemini.defaultModel || "gemini-3.7-flash")
+                    : (aiHealth?.ollama.defaultModel || ollamaModels[0]?.model || "gpt-oss:20b");
+                setSelectedModel(defaultM);
+            }
+        }
+    }, [ollamaModels, selectedProvider, aiHealth, selectedModel]);
+
     // tRPC mutations
     const generateQuestionsMutation = trpc.coordinator.generateQuestions.useMutation({
         onSuccess: (data) => {
+            if (data.fallbackUsed && data.fallbackMessage) {
+                toast.warning(data.fallbackMessage, { duration: 6000 });
+            }
             // Store generated questions in sessionStorage
             const sessionId = Date.now().toString();
             sessionStorage.setItem(`temp_questions_${sessionId}`, JSON.stringify(data.questions));
@@ -231,22 +252,61 @@ export default function GenerateQuestionsPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="space-y-2">
-                                <Label htmlFor="provider">Provider</Label>
+                                <div className="flex items-center justify-between">
+                                    <Label htmlFor="provider">Provider</Label>
+                                    {selectedProvider === "OLLAMA" && (
+                                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                            aiHealth?.ollama.isAvailable
+                                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                                : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                        }`}>
+                                            <span className={`h-1.5 w-1.5 rounded-full ${
+                                                aiHealth?.ollama.isAvailable ? "bg-emerald-500" : "bg-amber-500"
+                                            }`} />
+                                            {aiHealth?.ollama.isAvailable ? "Ollama Online" : "Ollama Offline (Fallback Ready)"}
+                                        </span>
+                                    )}
+                                </div>
                                 <Select
                                     value={selectedProvider}
                                     onValueChange={(value: "GEMINI" | "OLLAMA") => {
                                         setSelectedProvider(value);
-                                        setSelectedModel(value === "GEMINI" ? "gemini-3.6-flash" : "mistral:7b");
+                                        setSelectedModel(
+                                            value === "GEMINI"
+                                                ? (aiHealth?.gemini.defaultModel || "gemini-3.7-flash")
+                                                : (aiHealth?.ollama.defaultModel || "gpt-oss:20b")
+                                        );
                                     }}
                                 >
                                     <SelectTrigger>
                                         <SelectValue placeholder="Select provider" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="GEMINI">Gemini (Cloud)</SelectItem>
-                                        <SelectItem value="OLLAMA">Ollama (Local)</SelectItem>
+                                        <SelectItem value="GEMINI">
+                                            <div className="flex items-center justify-between gap-3 w-full">
+                                                <span>Gemini (Cloud)</span>
+                                                <span className="text-xs text-muted-foreground">Google AI</span>
+                                            </div>
+                                        </SelectItem>
+                                        <SelectItem value="OLLAMA">
+                                            <div className="flex items-center justify-between gap-3 w-full">
+                                                <span>Ollama (Local)</span>
+                                                <span className={`text-xs ${
+                                                    aiHealth?.ollama.isAvailable
+                                                        ? "text-emerald-600 dark:text-emerald-400"
+                                                        : "text-amber-600 dark:text-amber-400"
+                                                }`}>
+                                                    {aiHealth?.ollama.isAvailable ? "● Online" : "○ Offline"}
+                                                </span>
+                                            </div>
+                                        </SelectItem>
                                     </SelectContent>
                                 </Select>
+                                {selectedProvider === "OLLAMA" && aiHealth && !aiHealth.ollama.isAvailable && (
+                                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                                        Local Ollama daemon is currently unreachable. Generation will automatically fall back to Gemini so your request succeeds.
+                                    </p>
+                                )}
                             </div>
                         </CardContent>
                     </Card>

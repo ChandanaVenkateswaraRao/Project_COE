@@ -7,6 +7,7 @@ import { logger } from "@/lib/logger";
 import type { Prisma } from "@/generated/prisma/client";
 import {
   AIProviderType,
+  checkOllamaAvailability,
   generateAIText,
   getProviderType,
   listAvailableModels,
@@ -293,6 +294,50 @@ async function ensureChatHistoryTable() {
 }
 
 export const coordinatorRouter = createTRPCRouter({
+  // Check AI provider health & availability
+  checkAIHealth: coordinatorProcedure.query(async () => {
+    try {
+      const ollamaStatus = await checkOllamaAvailability();
+      const { geminiKeyManager } = await import("@/lib/gemini-key-manager");
+      const geminiKeyCount = geminiKeyManager.getKeyCount();
+
+      return {
+        ollama: {
+          isAvailable: ollamaStatus.isAvailable,
+          models: ollamaStatus.models,
+          defaultModel: process.env.OLLAMA_MODEL || "qwen2.5:7b",
+          error: ollamaStatus.error,
+        },
+        gemini: {
+          isAvailable: geminiKeyCount > 0,
+          keyCount: geminiKeyCount,
+          defaultModel: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+        },
+        defaultProvider: process.env.AI_PROVIDER || "GEMINI",
+      };
+    } catch (error) {
+      logger.error(
+        "CoordinatorRouter",
+        "Error during checkAIHealth",
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      return {
+        ollama: {
+          isAvailable: false,
+          models: [],
+          defaultModel: "qwen2.5:7b",
+          error: "Health check error",
+        },
+        gemini: {
+          isAvailable: false,
+          keyCount: 0,
+          defaultModel: "gemini-3.6-flash",
+        },
+        defaultProvider: "GEMINI",
+      };
+    }
+  }),
+
   // Get available AI models (supports both Ollama and Gemini)
   getOllamaModels: coordinatorProcedure
     .input(
@@ -328,7 +373,7 @@ export const coordinatorRouter = createTRPCRouter({
         if (providerType === AIProviderType.GEMINI) {
           return [{ name: "gemini-3.6-flash", model: "gemini-3.6-flash" }];
         }
-        return [{ name: "mistral:7b", model: "mistral:7b" }];
+        return [{ name: "qwen2.5:7b", model: "qwen2.5:7b" }];
       }
     }),
 
@@ -1118,23 +1163,67 @@ export const coordinatorRouter = createTRPCRouter({
 
         if (totalQuestions > 0) {
           try {
-            // Call AI service to generate questions using chunks
-            const generatedQuestions = await generateQuestionsWithAI(
-              {
-                materialContent: materialContent, // Use combined chunks instead of full parsedContent
-                courseName: material.course.name,
-                materialName: material.title,
-                unit: material.unit,
-                questionCounts: input.questionCounts,
-                bloomLevels: input.bloomLevels,
-                questionTypes: input.questionTypes,
-                academicLevel: input.academicLevel,
-                enableWebSearch: input.enableWebSearch,
-                enableRichMedia: input.enableRichMedia,
-              },
-              input.model,
-              input.provider,
-            );
+            let generatedQuestions;
+            let fallbackUsed = false;
+            let fallbackMessage: string | undefined;
+
+            try {
+              // Call AI service to generate questions using chunks
+              generatedQuestions = await generateQuestionsWithAI(
+                {
+                  materialContent: materialContent, // Use combined chunks instead of full parsedContent
+                  courseName: material.course.name,
+                  materialName: material.title,
+                  unit: material.unit,
+                  questionCounts: input.questionCounts,
+                  bloomLevels: input.bloomLevels,
+                  questionTypes: input.questionTypes,
+                  academicLevel: input.academicLevel,
+                  enableWebSearch: input.enableWebSearch,
+                  enableRichMedia: input.enableRichMedia,
+                },
+                input.model,
+                input.provider,
+              );
+            } catch (initialAiError) {
+              if (input.provider === "OLLAMA") {
+                logger.warn(
+                  "CoordinatorRouter",
+                  "Ollama generation failed, automatically falling back to Gemini",
+                  {
+                    error:
+                      initialAiError instanceof Error
+                        ? initialAiError.message
+                        : String(initialAiError),
+                  },
+                );
+                try {
+                  generatedQuestions = await generateQuestionsWithAI(
+                    {
+                      materialContent: materialContent,
+                      courseName: material.course.name,
+                      materialName: material.title,
+                      unit: material.unit,
+                      questionCounts: input.questionCounts,
+                      bloomLevels: input.bloomLevels,
+                      questionTypes: input.questionTypes,
+                      academicLevel: input.academicLevel,
+                      enableWebSearch: input.enableWebSearch,
+                      enableRichMedia: input.enableRichMedia,
+                    },
+                    undefined,
+                    "GEMINI",
+                  );
+                  fallbackUsed = true;
+                  fallbackMessage =
+                    "Ollama was unreachable or encountered an error. Successfully fell back to Gemini.";
+                } catch (fallbackError) {
+                  throw initialAiError;
+                }
+              } else {
+                throw initialAiError;
+              }
+            }
 
             // Update job status
             await prisma.question_Generation_Job.update({
@@ -1220,7 +1309,11 @@ export const coordinatorRouter = createTRPCRouter({
               courseId: material.courseId,
               materialId: input.materialId,
               unit: material.unit,
-              message: `Successfully generated ${totalQuestions} questions for review`,
+              fallbackUsed,
+              fallbackMessage,
+              message: fallbackUsed
+                ? `Generated ${totalQuestions} questions via Gemini fallback`
+                : `Successfully generated ${totalQuestions} questions for review`,
             };
           } catch (aiError) {
             // Update job with error status
@@ -1985,6 +2078,7 @@ export const coordinatorRouter = createTRPCRouter({
             // Generate embedding for the query
             const queryEmbedding = await embeddingService.generateEmbedding(
               input.message,
+              input.provider,
             );
 
             // Search for relevant chunks using cosine similarity
@@ -2154,16 +2248,17 @@ Respond naturally:
 - Keep it brief and friendly`;
         }
 
-        const providerType = getProviderType();
+        const effectiveProvider =
+          (input.provider as AIProviderType) || getProviderType();
         const model =
           input.model ||
           process.env.DEFAULT_AI_MODEL ||
-          (providerType === AIProviderType.GEMINI
+          (effectiveProvider === AIProviderType.GEMINI
             ? process.env.GEMINI_MODEL || "gemini-3.6-flash"
-            : process.env.OLLAMA_MODEL || "mistral:7b");
+            : process.env.OLLAMA_MODEL || "qwen2.5:7b");
 
         logger.debug("CoordinatorRouter", "Sending chat request", {
-          provider: providerType,
+          provider: effectiveProvider,
           model,
           useRAG,
           chunkCount: relevantChunks.length,
@@ -2171,30 +2266,61 @@ Respond naturally:
         });
 
         let answer: string;
+        let fallbackUsed = false;
         try {
           answer = await generateChatResponse(
             prompt,
             model,
-            input.provider as AIProviderType | undefined,
+            effectiveProvider,
           );
           if (!answer) {
             answer =
               "I'm Kai, and I couldn't generate a response. Please try again.";
           }
         } catch (error) {
-          logger.error(
-            "CoordinatorRouter",
-            "AI API error",
-            error instanceof Error ? error : new Error(String(error)),
-            {
-              provider: providerType,
-              model,
-            },
-          );
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: `Failed to generate response: ${error instanceof Error ? error.message : "Unknown error"}. Please ensure the AI service is configured correctly.`,
-          });
+          if (effectiveProvider === AIProviderType.OLLAMA) {
+            logger.warn(
+              "CoordinatorRouter",
+              "Ollama chat generation failed, automatically falling back to Gemini",
+              {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            );
+            try {
+              answer = await generateChatResponse(
+                prompt,
+                process.env.GEMINI_MODEL || "gemini-3.6-flash",
+                AIProviderType.GEMINI,
+              );
+              fallbackUsed = true;
+            } catch (fallbackError) {
+              logger.error(
+                "CoordinatorRouter",
+                "Gemini fallback also failed",
+                fallbackError instanceof Error
+                  ? fallbackError
+                  : new Error(String(fallbackError)),
+              );
+              throw new TRPCError({
+                code: "INTERNAL_SERVER_ERROR",
+                message: `Failed to generate response: ${error instanceof Error ? error.message : "Unknown error"}.`,
+              });
+            }
+          } else {
+            logger.error(
+              "CoordinatorRouter",
+              "AI API error",
+              error instanceof Error ? error : new Error(String(error)),
+              {
+                provider: effectiveProvider,
+                model,
+              },
+            );
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `Failed to generate response: ${error instanceof Error ? error.message : "Unknown error"}. Please ensure the AI service is configured correctly.`,
+            });
+          }
         }
 
         // Sanitize response: remove garbled text, ensure it's valid English
@@ -2214,7 +2340,7 @@ Respond naturally:
           },
         });
 
-        return { answer };
+        return { answer, fallbackUsed };
       } catch (error) {
         if (error instanceof TRPCError) {
           throw error;

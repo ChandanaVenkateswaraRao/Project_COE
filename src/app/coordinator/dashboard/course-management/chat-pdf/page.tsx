@@ -23,7 +23,7 @@ interface Message {
 export default function ChatPDFPage() {
   const [selectedMaterial, setSelectedMaterial] = useState<string>("");
   const [selectedProvider, setSelectedProvider] = useState<"GEMINI" | "OLLAMA">("OLLAMA");
-  const [selectedModel, setSelectedModel] = useState<string>("mistral:7b");
+  const [selectedModel, setSelectedModel] = useState<string>("gpt-oss:20b");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -32,13 +32,33 @@ export default function ChatPDFPage() {
 
   // Fetch materials and models
   const { data: materials = [], isLoading: materialsLoading } = trpc.coordinator.getUploadedMaterials.useQuery();
+  const { data: aiHealth } = trpc.coordinator.checkAIHealth.useQuery(undefined, {
+    refetchInterval: 30000,
+    refetchOnWindowFocus: false,
+  });
   const { data: ollamaModels = [], isLoading: modelsLoading } = trpc.coordinator.getOllamaModels.useQuery({
     provider: selectedProvider,
   });
 
+  // Keep selectedModel synchronized with available models
+  useEffect(() => {
+    if (ollamaModels && ollamaModels.length > 0) {
+      const modelExists = ollamaModels.some((m) => m.model === selectedModel);
+      if (!modelExists) {
+        const defaultM = selectedProvider === "GEMINI"
+          ? (aiHealth?.gemini.defaultModel || "gemini-3.7-flash")
+          : (aiHealth?.ollama.defaultModel || ollamaModels[0]?.model || "gpt-oss:20b");
+        setSelectedModel(defaultM);
+      }
+    }
+  }, [ollamaModels, selectedProvider, aiHealth, selectedModel]);
+
   // Chat mutation
   const chatMutation = trpc.coordinator.chatWithPDF.useMutation({
     onSuccess: (response) => {
+      if (response.fallbackUsed) {
+        toast.warning("Ollama was unreachable. Responded via Gemini fallback.", { duration: 5000 });
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -178,24 +198,63 @@ export default function ChatPDFPage() {
                 </Select>
               </div>
               <div className="md:col-span-1">
-                <Label htmlFor="provider" className="text-sm font-medium mb-2 block">
-                  AI Provider
-                </Label>
+                <div className="flex items-center justify-between mb-2">
+                  <Label htmlFor="provider" className="text-sm font-medium">
+                    AI Provider
+                  </Label>
+                  {selectedProvider === "OLLAMA" && (
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+                      aiHealth?.ollama.isAvailable
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                    }`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${
+                        aiHealth?.ollama.isAvailable ? "bg-emerald-500" : "bg-amber-500"
+                      }`} />
+                      {aiHealth?.ollama.isAvailable ? "Online" : "Offline (Fallback)"}
+                    </span>
+                  )}
+                </div>
                 <Select
                   value={selectedProvider}
                   onValueChange={(value: "GEMINI" | "OLLAMA") => {
                     setSelectedProvider(value);
-                    setSelectedModel(value === "GEMINI" ? "gemini-3.6-flash" : "mistral:7b");
+                    setSelectedModel(
+                      value === "GEMINI"
+                        ? (aiHealth?.gemini.defaultModel || "gemini-3.7-flash")
+                        : (aiHealth?.ollama.defaultModel || "gpt-oss:20b")
+                    );
                   }}
                 >
                   <SelectTrigger id="provider" className="h-11">
                     <SelectValue placeholder="Select provider" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="GEMINI">Gemini (Cloud)</SelectItem>
-                    <SelectItem value="OLLAMA">Ollama (Local)</SelectItem>
+                    <SelectItem value="GEMINI">
+                      <div className="flex items-center justify-between gap-3 w-full">
+                        <span>Gemini (Cloud)</span>
+                        <span className="text-xs text-muted-foreground">Google AI</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="OLLAMA">
+                      <div className="flex items-center justify-between gap-3 w-full">
+                        <span>Ollama (Local)</span>
+                        <span className={`text-xs ${
+                          aiHealth?.ollama.isAvailable
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-amber-600 dark:text-amber-400"
+                        }`}>
+                          {aiHealth?.ollama.isAvailable ? "● Online" : "○ Offline"}
+                        </span>
+                      </div>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+                {selectedProvider === "OLLAMA" && aiHealth && !aiHealth.ollama.isAvailable && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    Local Ollama daemon is offline. Chat will automatically fall back to Gemini.
+                  </p>
+                )}
               </div>
               <div className="md:col-span-1">
                 <Label htmlFor="model" className="text-sm font-medium mb-2 block">

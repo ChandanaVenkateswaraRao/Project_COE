@@ -12,6 +12,7 @@
  * - LaTeX and Mermaid diagram support
  */
 
+import { Agent } from "undici";
 import { generateText } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOllama } from "ollama-ai-provider-v2";
@@ -64,8 +65,33 @@ const normalizedOllamaUrl = rawOllamaUrl.endsWith("/api")
   ? rawOllamaUrl
   : `${rawOllamaUrl.replace(/\/$/, "")}/api`;
 
+// Use custom Undici agent with disabled timeouts for local LLMs running on CPU
+const ollamaAgent = new Agent({
+  headersTimeout: 0, // No headers timeout
+  bodyTimeout: 0,    // No body timeout
+  connectTimeout: 30000,
+});
+
+const ollamaCustomFetch = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => {
+  return fetch(input, {
+    ...init,
+    // @ts-ignore
+    dispatcher: ollamaAgent,
+  });
+};
+
+const ollamaHeaders: Record<string, string> = {};
+if (process.env.OLLAMA_API_KEY) {
+  ollamaHeaders["Authorization"] = `Bearer ${process.env.OLLAMA_API_KEY}`;
+}
+
 const ollamaProvider = createOllama({
   baseURL: normalizedOllamaUrl,
+  headers: ollamaHeaders,
+  fetch: ollamaCustomFetch,
 });
 
 let modelOverride: string | null = null;
@@ -102,12 +128,14 @@ function getModelName(
     return (
       process.env.GEMINI_MODEL ||
       process.env.DEFAULT_AI_MODEL ||
-      "gemini-3.6-flash"
+      "gemini-3.7-flash"
     );
   }
 
   return (
-    process.env.OLLAMA_MODEL || process.env.DEFAULT_AI_MODEL || "mistral:7b"
+    process.env.OLLAMA_MODEL ||
+    process.env.DEFAULT_AI_MODEL ||
+    (normalizedOllamaUrl.includes("ollama.com") ? "gpt-oss:20b" : "qwen2.5:7b")
   );
 }
 
@@ -129,7 +157,13 @@ function getModel(
     return { model: geminiProvider(modelName), providerType, modelName };
   }
 
-  return { model: ollamaProvider(modelName), providerType, modelName };
+  return {
+    model: ollamaProvider.chat(modelName as any, {
+      options: { num_ctx: 8192 },
+    }),
+    providerType,
+    modelName,
+  };
 }
 
 export async function generateAIText(
@@ -215,11 +249,12 @@ export async function generateQuestions(
     }
   }
 
+  const isOllama = getProviderType(provider) === AIProviderType.OLLAMA;
   const chunks = await chunkContent(params.materialContent, {
-    maxTokensPerChunk: 8000,
+    maxTokensPerChunk: isOllama ? 3500 : 8000,
   });
 
-  if (chunks.length === 1) {
+  if (chunks.length === 1 || (isOllama && totalQuestions <= 10)) {
     return generateQuestionsFromChunk(
       params,
       chunks[0].content,
@@ -273,8 +308,11 @@ async function generateQuestionsFromChunk(
   enableRichMedia: boolean = true,
   realWorldContext?: RealWorldContext,
 ): Promise<GeneratedQuestion[]> {
-  // Get academic level specific prompt
-  const systemPrompt = getAcademicLevelPrompt(academicLevel);
+  // Get provider-specific prompt
+  const isOllama = getProviderType(provider) === AIProviderType.OLLAMA;
+  const systemPrompt = isOllama
+    ? OLLAMA_SYSTEM_PROMPT
+    : getAcademicLevelPrompt(academicLevel);
 
   // Build the main prompt
   const prompt = buildEnhancedPrompt(
@@ -304,7 +342,7 @@ async function generateQuestionsFromChunk(
   // Use enhanced parser for rich media content
   const parsed = parseEnhancedQuestionResponse(
     responseText,
-    getProviderName(),
+    getProviderName(provider),
     academicLevel,
   );
 
@@ -483,34 +521,93 @@ export async function listAvailableModels(
     ];
   }
 
-  const ollamaUrl =
+  const rawUrl =
     process.env.OLLAMA_URL ||
     process.env.OLLAMA_BASE_URL ||
     "http://localhost:11434";
+  const baseUrl = rawUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (process.env.OLLAMA_API_KEY) {
+    headers["Authorization"] = `Bearer ${process.env.OLLAMA_API_KEY}`;
+  }
 
   try {
-    const response = await fetch(`${ollamaUrl}/api/tags`, {
+    const response = await fetch(`${baseUrl}/api/tags`, {
       method: "GET",
-      headers: { "Content-Type": "application/json" },
+      headers,
     });
 
     if (!response.ok) {
-      return ["mistral:7b"];
+      return ["qwen2.5:7b", "mistral:7b"];
     }
 
     const data = await response.json();
     const models = data.models || [];
     const modelNames = models.map((model: { name: string }) => model.name);
-    return modelNames.length > 0 ? modelNames : ["mistral:7b"];
+    return modelNames.length > 0 ? modelNames : ["qwen2.5:7b"];
   } catch (error) {
     logger.warn(
       "AIService",
       "Failed to fetch Ollama models",
       error instanceof Error ? error : new Error(String(error)),
     );
-    return ["mistral:7b"];
+    return ["qwen2.5:7b"];
+  }
+}
+
+export async function checkOllamaAvailability(): Promise<{
+  isAvailable: boolean;
+  models: string[];
+  error?: string;
+}> {
+  const rawUrl =
+    process.env.OLLAMA_URL ||
+    process.env.OLLAMA_BASE_URL ||
+    "http://localhost:11434";
+  const baseUrl = rawUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (process.env.OLLAMA_API_KEY) {
+      headers["Authorization"] = `Bearer ${process.env.OLLAMA_API_KEY}`;
+    }
+    const response = await fetch(`${baseUrl}/api/tags`, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return {
+        isAvailable: false,
+        models: [],
+        error: `Ollama returned status ${response.status}`,
+      };
+    }
+
+    const data = await response.json();
+    const models = (data.models || []).map((m: { name: string }) => m.name);
+    return {
+      isAvailable: true,
+      models,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error);
+    return {
+      isAvailable: false,
+      models: [],
+      error: message.includes("abort")
+        ? "Connection timeout"
+        : "Ollama daemon unreachable",
+    };
   }
 }
 
 // Re-export types for convenience
 export * from "./types";
+

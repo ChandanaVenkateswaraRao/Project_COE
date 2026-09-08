@@ -37,11 +37,14 @@ export class EmbeddingService {
   private ollamaBaseUrl: string;
   private ollamaModel: string;
 
-  constructor() {
-    // Determine provider based on environment
-    const aiProvider = process.env.AI_PROVIDER?.toUpperCase() || "GEMINI";
-    this.provider = aiProvider === "OLLAMA" ? "OLLAMA" : "GOOGLE";
-    
+  constructor(provider?: EmbeddingProvider | "GEMINI") {
+    if (provider) {
+      this.provider = provider === "OLLAMA" ? "OLLAMA" : "GOOGLE";
+    } else {
+      const aiProvider = process.env.AI_PROVIDER?.toUpperCase() || "GEMINI";
+      this.provider = aiProvider === "OLLAMA" ? "OLLAMA" : "GOOGLE";
+    }
+
     this.ollamaBaseUrl =
       process.env.OLLAMA_URL ||
       process.env.OLLAMA_BASE_URL ||
@@ -52,8 +55,15 @@ export class EmbeddingService {
   /**
    * Generate embedding for a single text
    */
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
-    if (this.provider === "GOOGLE") {
+  async generateEmbedding(
+    text: string,
+    overrideProvider?: EmbeddingProvider | "GEMINI",
+  ): Promise<EmbeddingResult> {
+    const activeProvider = overrideProvider
+      ? (overrideProvider === "OLLAMA" ? "OLLAMA" : "GOOGLE")
+      : this.provider;
+
+    if (activeProvider === "GOOGLE") {
       return this.generateGoogleEmbedding(text);
     }
     return this.generateOllamaEmbedding(text);
@@ -129,11 +139,16 @@ export class EmbeddingService {
    */
   private async generateOllamaEmbedding(text: string): Promise<EmbeddingResult> {
     try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (process.env.OLLAMA_API_KEY) {
+        headers["Authorization"] = `Bearer ${process.env.OLLAMA_API_KEY}`;
+      }
+
       const response = await fetch(`${this.ollamaBaseUrl}/api/embeddings`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           model: this.ollamaModel,
           prompt: text.substring(0, 8000),
@@ -164,12 +179,23 @@ export class EmbeddingService {
         tokenCount,
       };
     } catch (error) {
-      logger.error(
+      logger.warn(
         "EmbeddingService",
-        "Failed to generate Ollama embedding",
-        error instanceof Error ? error : new Error(String(error))
+        "Failed to generate Ollama embedding, attempting Google embedding fallback",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
       );
-      throw error;
+      try {
+        return await this.generateGoogleEmbedding(text);
+      } catch (fallbackError) {
+        logger.error(
+          "EmbeddingService",
+          "Both Ollama and Google embedding generation failed",
+          fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError))
+        );
+        throw error;
+      }
     }
   }
 

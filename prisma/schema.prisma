@@ -1,0 +1,514 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// BETTER AUTH CORE MODELS
+// ============================================
+
+model User {
+  id                        String                    @id @default(uuid())
+  // Better Auth required fields
+  name                      String
+  email                     String                    @unique
+  emailVerified             Boolean                   @default(false)
+  image                     String?
+  // Custom fields for BloomIQ
+  firstName                 String
+  lastName                  String
+  facultyId                 String                    @unique
+  password                  String? // Optional for social auth
+  designation               Designation
+  role                      Role
+  departmentId              String?
+  isActive                  Boolean                   @default(true)
+  // Timestamps
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  // Relations
+  Course_Material           Course_Material[]
+  courseCoordinatorCourses  Course[]                  @relation("CourseCoordinator")
+  moduleCoordinatorCourses  Course[]                  @relation("ModuleCoordinator")
+  programCoordinatorCourses Course[]                  @relation("ProgramCoordinator")
+  initiatedJobs             Question_Generation_Job[] @relation("InitiatedBy")
+  chatHistory               Chat_History[]            @relation("UserChatHistory")
+  department                Department?               @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  headedDepartments         Department[]              @relation("DepartmentHOD")
+  deanedDepartments         Department[]              @relation("DepartmentDean")
+  // Better Auth relations
+  sessions                  Session[]
+  accounts                  Account[]
+
+  @@index([email, facultyId])
+  @@map("user")
+}
+
+/// Better Auth Session model
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+/// Better Auth Account model (for OAuth providers)
+model Account {
+  id                    String    @id @default(uuid())
+  userId                String
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("account")
+}
+
+/// Better Auth Verification model (for email verification, password reset, etc.)
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+model Course {
+  id                     String                    @id @default(uuid())
+  course_code            String                    @unique
+  name                   String
+  description            String
+  departmentId           String?
+  courseCoordinatorId    String
+  moduleCoordinatorId    String
+  programCoordinatorId   String
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  material               Course_Material[]
+  department             Department?               @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  courseCoordinator      User                      @relation("CourseCoordinator", fields: [courseCoordinatorId], references: [id], onDelete: Cascade)
+  moduleCoordinator      User                      @relation("ModuleCoordinator", fields: [moduleCoordinatorId], references: [id], onDelete: Cascade)
+  programCoordinator     User                      @relation("ProgramCoordinator", fields: [programCoordinatorId], references: [id], onDelete: Cascade)
+  questionGenerationJobs Question_Generation_Job[] @relation("CourseOnQuestionGenerationJob")
+  questions              Question[]
+  patterns               QuestionPaperPattern[]
+
+  @@index([course_code, id])
+  @@index([departmentId])
+  @@map("courses")
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String   @unique
+  description String?
+  hodId       String?
+  deanId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  hod     User?    @relation("DepartmentHOD", fields: [hodId], references: [id], onDelete: SetNull)
+  dean    User?    @relation("DepartmentDean", fields: [deanId], references: [id], onDelete: SetNull)
+  members User[]   @relation("DepartmentMembers")
+  courses Course[]
+
+  @@index([hodId])
+  @@index([deanId])
+  @@map("departments")
+}
+
+model Course_Material {
+  id                      String                    @id @default(uuid())
+  courseId                String
+  title                   String
+  filePath                String
+  materialType            Material_Type
+  unit                    Int                       @default(0)
+  version                 Int                       @default(1)
+  uploadedById            String
+  parsedContent           String? // Markdown content parsed from PDF
+  parsingStatus           Parsing_Status            @default(PENDING) // Track parsing progress
+  parsingError            String? // Store any parsing errors
+  embeddingStatus         Parsing_Status            @default(PENDING) // Track embedding progress
+  embeddingError          String? // Store any embedding errors
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+  course                  Course                    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  uploadedBy              User                      @relation(fields: [uploadedById], references: [id])
+  Question_Generation_Job Question_Generation_Job[]
+  questions               Question[]
+  chunks                  Material_Chunk[]
+  chatHistory             Chat_History[]            @relation("MaterialChatHistory")
+
+  @@index([id, courseId])
+  @@index([courseId, unit])
+  @@map("course_material")
+}
+
+model Material_Chunk {
+  id         String          @id @default(uuid())
+  materialId String
+  unit       Int             @default(0)
+  chunkIndex Int // Order of chunk within material
+  title      String? // Section title/heading
+  content    String // Chunk text content
+  embedding  Float[] // Vector embedding (stored as array)
+  tokenCount Int // Number of tokens in chunk
+  metadata   Json? // Additional metadata (keywords, etc.)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  material   Course_Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@index([materialId, unit])
+  @@index([materialId, chunkIndex])
+  @@map("material_chunks")
+}
+
+model Question {
+  id                 String              @id @default(uuid())
+  courseId           String
+  materialId         String? // Reference to source material
+  unit               Int                 @default(0)
+  question           String
+  answer             String
+  questionType       Question_Type
+  difficultyLevel    DifficultyLevel     @default(MEDIUM)
+  bloomLevel         BloomLevel          @default(UNDERSTAND)
+  generationType     GenerationType      @default(DIRECT)
+  marks              Marks
+  status             QuestionStatus      @default(CREATED_BY_COURSE_COORDINATOR)
+  // Review flags
+  reviewedByCc       Boolean             @default(false)
+  reviewedByMc       Boolean             @default(false)
+  reviewedByPc       Boolean             @default(false)
+  ccApprovedAt       DateTime?
+  mcApprovedAt       DateTime?
+  pcApprovedAt       DateTime?
+  // Metadata
+  materialName       String?
+  isFinalized        Boolean             @default(false)
+  // Enhanced generation fields
+  academicLevel      AcademicLevel       @default(UG)
+  renderingType      RenderingType       @default(TEXT)
+  latexContent       String? // LaTeX formatted content
+  mermaidContent     String? // Mermaid diagram syntax
+  realWorldContext   String? // Real-world grounding reference
+  bloomJustification String? // Explanation for Bloom's level choice
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  feedback           Question_Feedback[] @relation("QuestionOnFeedback")
+  course             Course              @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseMaterial     Course_Material?    @relation(fields: [materialId], references: [id])
+
+  @@index([courseId, id, status])
+  @@index([materialId])
+  @@map("questions")
+}
+
+model Question_Feedback {
+  id         String   @id @default(uuid())
+  questionId String
+  remarks    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  question   Question @relation("QuestionOnFeedback", fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, id])
+  @@map("question_feedback")
+}
+
+model Chat_History {
+  id         String          @id @default(uuid())
+  userId     String
+  materialId String
+  role       String // "user" or "assistant"
+  content    String
+  createdAt  DateTime        @default(now())
+  user       User            @relation("UserChatHistory", fields: [userId], references: [id], onDelete: Cascade)
+  material   Course_Material @relation("MaterialChatHistory", fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@index([userId, materialId, createdAt])
+  @@index([createdAt]) // For 24-hour cleanup
+  @@map("chat_history")
+}
+
+model Question_Generation_Job {
+  id             String          @id @default(uuid())
+  courseId       String
+  status         JobStatus       @default(PENDING)
+  materialId     String
+  unit           Int
+  totalQuestions Int             @default(0)
+  errorMessage   String?
+  initiatedById  String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  course         Course          @relation("CourseOnQuestionGenerationJob", fields: [courseId], references: [id])
+  initiatedBy    User?           @relation("InitiatedBy", fields: [initiatedById], references: [id])
+  courseMaterial Course_Material @relation(fields: [materialId], references: [id])
+
+  @@index([courseId, materialId])
+  @@map("question_generation_job")
+}
+
+enum Role {
+  COURSE_COORDINATOR
+  MODULE_COORDINATOR
+  PROGRAM_COORDINATOR
+  HOD
+  DEAN
+  CONTROLLER_OF_EXAMINATION
+  ADMIN
+}
+
+enum Designation {
+  ASSISTANT_PROFESSOR
+  ASSOCIATE_PROFESSOR
+  PROFESSOR
+}
+
+enum Material_Type {
+  SYLLABUS
+  UNIT_PDF
+}
+
+/// *
+///  * PDF parsing status for async processing
+enum Parsing_Status {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum Question_Type {
+  REMEMBER
+  ANALYZE
+  UNDERSTAND
+  APPLY
+  EVALUATE
+  CREATE
+}
+
+/// *
+///  * Job status for background generation tracking
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+/// *
+///  * Marks buckets for university paper pattern
+enum Marks {
+  TWO
+  EIGHT
+  SIXTEEN
+}
+
+/// *
+///  * Question review / lifecycle states
+enum QuestionStatus {
+  DRAFT
+  CREATED_BY_COURSE_COORDINATOR
+  UNDER_REVIEW_FROM_PROGRAM_COORDINATOR
+  UNDER_REVIEW_FROM_MODULE_COORDINATOR
+  ACCEPTED
+  REJECTED
+}
+
+/// *
+///  * Difficulty levels for questions
+enum DifficultyLevel {
+  EASY
+  MEDIUM
+  HARD
+}
+
+/// *
+///  * Academic level for difficulty scaling
+enum AcademicLevel {
+  UG // Undergraduate - Apply, Analyze focus
+  PG // Postgraduate - Evaluate, Create focus
+  PHD // Doctoral - Original synthesis, Research-level
+}
+
+/// *
+///  * Rendering type for rich media support
+enum RenderingType {
+  TEXT // Plain text only
+  LATEX // Contains LaTeX mathematical notation
+  MERMAID // Contains Mermaid diagram syntax
+  MIXED // Contains both LaTeX and Mermaid
+}
+
+/// *
+///  * Bloom's taxonomy levels for learning objectives
+enum BloomLevel {
+  REMEMBER
+  UNDERSTAND
+  APPLY
+  ANALYZE
+  EVALUATE
+  CREATE
+}
+
+/// *
+///  * Question generation types
+enum GenerationType {
+  DIRECT
+  INDIRECT
+  SCENARIO_BASED
+  PROBLEM_BASED
+}
+
+/// *
+///  * Pattern approval status
+enum PatternStatus {
+  DRAFT
+  PENDING_MC_APPROVAL
+  PENDING_PC_APPROVAL
+  PENDING_HOD_APPROVAL
+  PENDING_DEAN_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+/// *
+///  * Question paper status
+enum PaperStatus {
+  DRAFT
+  GENERATED
+  FINALIZED
+}
+
+/// *
+///  * Exam types
+enum ExamType {
+  SESSIONAL_1
+  SESSIONAL_2
+  END_SEMESTER
+}
+
+/// *
+///  * Semester type
+enum SemesterType {
+  ODD
+  EVEN
+}
+
+/// *
+///  * Question Paper Pattern - Defines the structure of the exam paper
+model QuestionPaperPattern {
+  id           String       @id @default(uuid())
+  courseId     String
+  course       Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  patternName  String
+  academicYear String
+  semesterType SemesterType // ODD or EVEN
+  examType     ExamType // SESSIONAL_1, SESSIONAL_2, END_SEMESTER
+
+  totalMarks Int // 50 for Sessional, 100 for End Sem
+  duration   Int // minutes
+
+  // Part A and Part B structures stored as JSON
+  // This allows flexible question slot definitions
+  partAStructure Json // Array of question slots
+  partBStructure Json // Array of question slots with OR options
+
+  instructions String?
+
+  // Approval workflow
+  status        PatternStatus @default(DRAFT)
+  createdByRole String
+  createdById   String
+
+  mcApproved     Boolean   @default(false)
+  mcApprovedAt   DateTime?
+  mcApprovedById String?
+  mcRemarks      String?
+
+  pcApproved     Boolean   @default(false)
+  pcApprovedAt   DateTime?
+  pcApprovedById String?
+  pcRemarks      String?
+
+  hodApproved     Boolean   @default(false)
+  hodApprovedAt   DateTime?
+  hodApprovedById String?
+  hodRemarks      String?
+
+  deanApproved     Boolean   @default(false)
+  deanApprovedAt   DateTime?
+  deanApprovedById String?
+  deanRemarks      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  generatedPapers QuestionPaper[]
+
+  @@index([courseId])
+  @@map("question_paper_patterns")
+}
+
+/// *
+///  * Generated Question Paper - Final exam paper
+model QuestionPaper {
+  id         String @id @default(uuid())
+  patternId  String
+  courseId   String
+  paperCode  String @unique // e.g., CS301-2025-SEM1-SET-A
+  setVariant String // e.g., "SET-A", "SET-B"
+
+  // Selected questions (JSON array of question IDs)
+  partA_questionIds String[] // Question IDs for Part A
+  partB_questionIds String[] // Question IDs for Part B
+
+  // Generated content
+  paperContent     String? // Final paper HTML/JSON
+  answerKeyContent String? // Answer key HTML/JSON
+
+  status        PaperStatus @default(DRAFT)
+  generatedAt   DateTime?
+  generatedById String
+
+  // Security - only COE can finalize
+  isFinalized Boolean   @default(false)
+  finalizedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pattern QuestionPaperPattern @relation(fields: [patternId], references: [id])
+
+  @@index([patternId])
+  @@index([courseId])
+  @@map("question_papers")
+}

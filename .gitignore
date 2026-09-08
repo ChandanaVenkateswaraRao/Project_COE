@@ -1,0 +1,118 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Testing
+/coverage
+*.lcov
+.nyc_output
+
+# Next.js & Turbopack
+/.next/
+/out/
+.turbo/
+
+# Production / Bundler outputs
+/build
+/dist
+
+# Environment variables & secrets (prevent accidental credential leaks)
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+.env.staging
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.cert
+*.pfx
+credentials.json
+*service-account*.json
+google-credentials*.json
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Prisma Generated Client
+/src/generated/prisma
+/src/generated/
+
+# Uploaded & Temporary files
+/src/uploads/
+uploads/
+temp/
+tmp/
+.temp/
+.tmp/
+*.tmp
+
+# Bloom AI & Local databases
+bloom.json
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Logs
+/logs/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+lerna-debug.log*
+
+# IDEs and Editors
+.idea/
+*.iml
+*.iws
+*.ipr
+*.sublime-project
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+*.swp
+*.swo
+*~
+*.bak
+
+# AI tool local caches and runtime state
+.claude.json
+.cursorindexing
+.cursor/index*
+.antigravity/
+.gemini/
+
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Thumbs.db:encryptable
+[Dd]esktop.ini
+$RECYCLE.BIN/
+

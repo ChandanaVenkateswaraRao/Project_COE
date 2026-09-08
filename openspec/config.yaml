@@ -1,0 +1,38 @@
+schema: spec-driven
+
+# Project context
+# This is shown to AI when creating artifacts.
+context: |
+  Project: BloomIQ (AI-powered question generation and course management platform aligned with Bloom's Taxonomy)
+  Tech stack:
+    - Framework: Next.js (App Router)
+    - Language: TypeScript (strict)
+    - Runtime & Package Manager: Bun
+    - Database & ORM: PostgreSQL, Prisma ORM
+    - API: tRPC with TanStack React Query
+    - Styling: Tailwind CSS, Radix UI primitives, Lucide icons
+    - Authentication: Better-Auth
+    - AI: Vercel AI SDK, Google Gemini / AI SDK Google provider
+
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
